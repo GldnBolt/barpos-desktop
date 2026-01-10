@@ -1,0 +1,2 @@
+product_id,nombre,tipo,qty_total,subtotal,iva,total
+4,Agua,bebida,3,3000.0,390.0,3390.0

@@ -1,0 +1,4 @@
+product_id,nombre,tipo,qty_total,subtotal,iva,total
+4,Agua,bebida,3,3000.0,390.0,3390.0
+2,Cerveza Imperial,bebida,1,1600.0,208.0,1808.0
+7,Pollo de 3000,comida,1,3000.0,390.0,3390.0

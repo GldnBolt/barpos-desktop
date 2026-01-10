@@ -1,0 +1,2 @@
+id,ts,cuenta,subtotal,iva,total,items_json
+1,2026-01-10 12:39:05,Mesa 1,3000.0,390.0,3390.0,"[{""product_id"": 4, ""nombre"": ""Agua"", ""tipo"": ""bebida"", ""qty"": 3, ""unit_price_centavos"": 100000, ""line_subtotal_centavos"": 300000}]"

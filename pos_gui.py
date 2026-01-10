@@ -70,17 +70,19 @@ FONT_HUGE = ("Segoe UI", 18, "bold")
 # -----------------------------
 # Dialogs
 # -----------------------------
-class LoginDialog(tk.Toplevel):
-    def __init__(self, parent, service: POSService):
-        super().__init__(parent)
-        self.title("Login - POS")
-        self.resizable(False, False)
-        self.configure(bg=PALETTE["panel"])
+class LoginDialog(tk.Frame):
+    def __init__(self, parent, service: POSService, on_success_callback):
+        super().__init__(parent, bg=PALETTE["bg"])
         self.service = service
+        self.on_success_callback = on_success_callback
         self.result = None  # (username, role)
 
-        frm = tk.Frame(self, bg=PALETTE["panel"], padx=16, pady=16)
-        frm.pack(fill="both", expand=True)
+        # Centrar el panel de login
+        container = tk.Frame(self, bg=PALETTE["bg"])
+        container.place(relx=0.5, rely=0.5, anchor="center")
+        
+        frm = tk.Frame(container, bg=PALETTE["panel"], padx=16, pady=16, relief="raised", bd=2)
+        frm.pack(fill="both", expand=True, padx=20, pady=20)
 
         tk.Label(frm, text="Usuario", fg=PALETTE["text"], bg=PALETTE["panel"], font=FONT_BIG).grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.ent_user = tk.Entry(frm, width=22, font=FONT_BIG)
@@ -115,22 +117,6 @@ class LoginDialog(tk.Toplevel):
         self.bind("<Return>", lambda e: self._login())
         self.bind("<Escape>", lambda e: self._cancel())
 
-        self.transient(parent)
-                # --- Forzar visible / centrado (Windows-friendly) ---
-        self.update_idletasks()
-        w = self.winfo_reqwidth()
-        h = self.winfo_reqheight()
-        x = (self.winfo_screenwidth() - w) // 2
-        y = (self.winfo_screenheight() - h) // 2
-        self.geometry(f"+{x}+{y}")
-
-        # Levantar y forzar focus (evita que quede detrás)
-        self.lift()
-        self.focus_force()
-        self.attributes("-topmost", True)
-        self.after(400, lambda: self.attributes("-topmost", False))
-
-        self.grab_set()
         self.ent_user.focus_set()
 
     def _login(self):
@@ -138,14 +124,15 @@ class LoginDialog(tk.Toplevel):
         p = self.ent_pass.get().strip()
         ok, role = self.service.authenticate(u, p)
         if not ok:
-            messagebox.showerror("Login", "Usuario o contraseña incorrectos.", parent=self)
+            messagebox.showerror("Login", "Usuario o contraseña incorrectos.", parent=self.master)
             return
         self.result = (u.lower(), role)
-        self.destroy()
+        if self.on_success_callback:
+            self.on_success_callback(u.lower(), role)
 
     def _cancel(self):
         self.result = None
-        self.destroy()
+        self.master.destroy()
 
 
 class ProductEditor(tk.Toplevel):
@@ -721,6 +708,28 @@ class CashCloseDialog(tk.Toplevel):
         self.entry_notes = tk.Entry(frm, width=40, font=FONT_BASE)
         self.entry_notes.pack(pady=(0, 20))
 
+        # Botón de exportación (exporta todo a carpeta del día)
+        export_frame = tk.Frame(frm, bg=PALETTE["panel"])
+        export_frame.pack(pady=(0, 15))
+
+        tk.Label(
+            export_frame,
+            text="📊 Exportar datos del día:",
+            fg=PALETTE["text"],
+            bg=PALETTE["panel"],
+            font=FONT_BASE
+        ).pack(pady=(0, 8))
+
+        def export_btn(text, cmd):
+            return tk.Button(
+                export_frame, text=text, command=cmd,
+                font=FONT_BIG, fg="white", bg=PALETTE["primary"],
+                activebackground=PALETTE["primary"], activeforeground="white",
+                bd=0, padx=24, pady=12, cursor="hand2"
+            )
+
+        export_btn("💾 Exportar Todo (Inventario, Ventas, Cierres)", self._export_all).pack(pady=4)
+
         btns = tk.Frame(frm, bg=PALETTE["panel"])
         btns.pack()
 
@@ -743,6 +752,128 @@ class CashCloseDialog(tk.Toplevel):
         self.entry_counted.focus_set()
         self.entry_counted.select_range(0, tk.END)
         self._center()
+
+    def _export_all(self):
+        """Exporta inventario, ventas y cierres de caja a una carpeta del día."""
+        try:
+            from pos_core import app_base_dir
+            
+            # Seleccionar carpeta base (docs)
+            base_dir = filedialog.askdirectory(
+                title="Selecciona la carpeta 'docs' donde guardar las exportaciones",
+                initialdir=app_base_dir
+            )
+            
+            if not base_dir:
+                return
+            
+            service = self.master.service
+            bd = service.business_date()
+            
+            # Crear carpeta del día
+            day_folder = os.path.join(base_dir, bd)
+            os.makedirs(day_folder, exist_ok=True)
+            
+            files_created = []
+            
+            # 1. Exportar inventario
+            inv_path = os.path.join(day_folder, f"inventario_{bd}.csv")
+            products = service.list_products()
+            
+            with open(inv_path, "w", newline="", encoding="utf-8") as f:
+                import csv
+                w = csv.writer(f)
+                w.writerow(["id", "nombre", "tipo", "precio", "stock", "estado"])
+                for p in products:
+                    from pos_core import LOW_STOCK_THRESHOLD
+                    estado = "SIN STOCK" if p.stock <= 0 else ("BAJO" if p.stock <= LOW_STOCK_THRESHOLD else "OK")
+                    w.writerow([p.id, p.nombre, p.tipo, p.precio_centavos / 100, p.stock, estado])
+            files_created.append(f"inventario_{bd}.csv")
+            
+            # 2. Exportar ventas
+            ventas_path = os.path.join(day_folder, f"ventas_{bd}.csv")
+            rows = service.db.daily_sales_by_product(bd)
+            
+            with open(ventas_path, "w", newline="", encoding="utf-8") as f:
+                import csv
+                w = csv.writer(f)
+                w.writerow(["product_id", "nombre", "tipo", "qty_total", "subtotal", "iva", "total"])
+                for r in rows:
+                    # Usar índices numéricos: 0=product_id, 1=product_nombre, 2=product_tipo, 3=qty_total, 4=subtotal_total, 5=iva_total, 6=total_total
+                    w.writerow([
+                        r[0],  # product_id
+                        r[1],  # product_nombre
+                        r[2],  # product_tipo
+                        int(r[3]),  # qty_total
+                        int(r[4]) / 100,  # subtotal_total
+                        int(r[5]) / 100,  # iva_total
+                        int(r[6]) / 100   # total_total
+                    ])
+            files_created.append(f"ventas_{bd}.csv")
+            
+            # 3. Exportar cierres de caja
+            cierre_path = os.path.join(day_folder, f"cierre_caja_{bd}.csv")
+            
+            cursor = service.db.conn.cursor()
+            cursor.execute("""
+                SELECT id, opened_ts, business_date, opening_amount_centavos, 
+                       counted_cash_centavos, expected_cash_centavos, 
+                       diff_cash_centavos, notes, opened_by, closed_by
+                FROM cash_sessions
+                WHERE business_date = ?
+                ORDER BY opened_ts DESC
+            """, (bd,))
+            
+            sessions = cursor.fetchall()
+            
+            with open(cierre_path, "w", newline="", encoding="utf-8") as f:
+                import csv
+                w = csv.writer(f)
+                w.writerow(["id", "apertura_ts", "fecha", "monto_apertura", "efectivo_contado", 
+                           "efectivo_esperado", "diferencia", "notas", "abierto_por", "cerrado_por"])
+                
+                for s in sessions:
+                    w.writerow([
+                        s[0],  # id
+                        s[1],  # ts
+                        s[2],  # business_date
+                        s[3] / 100 if s[3] else 0,  # opening_amount
+                        s[4] / 100 if s[4] else 0,  # closing_cash
+                        s[5] / 100 if s[5] else 0,  # expected_cash
+                        s[6] / 100 if s[6] else 0,  # diff_cash
+                        s[7] or "",  # notes
+                        s[8] or "",  # opened_by
+                        s[9] or ""   # closed_by
+                    ])
+            files_created.append(f"cierre_caja_{bd}.csv")
+            
+            # 4. Exportar cuentas cerradas
+            cuentas_path = os.path.join(day_folder, f"cuentas_cerradas_{bd}.csv")
+            closed = service.db.list_closed_accounts(bd)
+            
+            with open(cuentas_path, "w", newline="", encoding="utf-8") as f:
+                import csv
+                w = csv.writer(f)
+                w.writerow(["id", "ts", "cuenta", "subtotal", "iva", "total", "items_json"])
+                for r in closed:
+                    # Usar índices numéricos: 0=id, 1=ts, 2=cuenta_label, 3=subtotal, 4=iva, 5=total, 6=items_json
+                    w.writerow([
+                        r[0],  # id
+                        r[1],  # ts
+                        r[2],  # cuenta_label
+                        int(r[3]) / 100,  # subtotal_centavos
+                        int(r[4]) / 100,  # iva_centavos
+                        int(r[5]) / 100,  # total_centavos
+                        r[6]   # items_json
+                    ])
+            files_created.append(f"cuentas_cerradas_{bd}.csv")
+            
+            msg = f"Exportación completada en:\n{day_folder}\n\nArchivos creados:\n" + "\n".join(f"  • {f}" for f in files_created)
+            messagebox.showinfo("Exportación exitosa", msg, parent=self)
+            open_path_in_os(day_folder)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo completar la exportación:\n{e}", parent=self)
 
     def _center(self):
         self.update_idletasks()
@@ -987,45 +1118,55 @@ class POSApp(tk.Tk):
         # Login
         self.user = None
         self.role = None
+        self.main_content = None  # Contenedor de la interfaz principal
         self.update_idletasks()
 
-        dlg = LoginDialog(self, self.service)
-        self.wait_window(dlg)
-
-        if dlg.result is None:
-            self.destroy()
-            return
-
-        self.user, self.role = dlg.result
-        self.current_user = self.user  # Alias para uso en mensajes
+        # Mostrar pantalla de login
+        self.login_frame = LoginDialog(self, self.service, self.on_login_success)
+        self.login_frame.pack(fill="both", expand=True)
+        
+        self.current_user = None  # Se establecerá después del login
 
 
-        # Touch helpers
+        # Touch helpers (se inicializarán después del login)
         self.selected_slot = None
         self.product_map = {}
-        self.qty_var = tk.IntVar(value=1)
-        self.last_product_id = None  # Último producto tocado en el catálogo
-        self.catalog_widget = None  # Referencia al widget ProductCatalog
+        self.qty_var = None
+        self.last_product_id = None
+        self.catalog_widget = None
+        self.search_var = None
+        self.qty_str_var = None
+        self.current_filter = ""
+        self._fullscreen = False
+        self.last_click_time = 0
+        self.last_clicked_slot = None
         
-        # Búsqueda y keypad táctil
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", lambda *args: self.on_search_change())
-        self.qty_str_var = tk.StringVar(value="1")
-        self.current_filter = ""  # Texto de búsqueda actual
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
+    def on_login_success(self, username, role):
+        """Callback ejecutado cuando el login es exitoso"""
+        self.user = username
+        self.role = role
+        self.current_user = username
+        
+        # Destruir el frame de login
+        self.login_frame.destroy()
+        self.login_frame = None
+        
+        # Inicializar variables para la UI principal
+        self.qty_var = tk.IntVar(value=1)
+        
+        # Construir la interfaz principal
         self._setup_ttk_style()
         self._build_ui()
         self.apply_permissions()
         self.refresh_all()
 
         self.after(150, self.check_stale_accounts)
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Hotkeys
         self.bind("<F11>", lambda e: self.toggle_fullscreen())
         self.bind("<Escape>", lambda e: self.exit_fullscreen())
-
-        self._fullscreen = False
 
     def _try_zoom(self):
         try:
@@ -1114,7 +1255,6 @@ class POSApp(tk.Tk):
             )
 
         hbtn("Refrescar", self.refresh_all, PALETTE["btn"]).pack(side="right", padx=8)
-        hbtn("Exportar CSV", self.gui_export_csv_quick_today, PALETTE["primary"]).pack(side="right", padx=8)
 
         # Notebook
         self.nb = ttk.Notebook(self)
@@ -1160,7 +1300,7 @@ class POSApp(tk.Tk):
                 width=12,
                 height=3,
                 cursor="hand2",
-                command=lambda s=slot: self.select_slot(s)
+                command=lambda s=slot: self.on_mesa_click(s)
             )
             return btn
 
@@ -1188,7 +1328,6 @@ class POSApp(tk.Tk):
                 bd=0, padx=14, pady=12, cursor="hand2"
             )
 
-        big_action("Abrir Mesa", self.gui_open_account_touch, PALETTE["primary"]).pack(fill="x", pady=6)
         big_action("Cobrar / Cerrar", self.gui_close_account, PALETTE["warning"]).pack(fill="x", pady=6)
         big_action("Liberar (vacía)", self.gui_free_empty_selected, PALETTE["btn"]).pack(fill="x", pady=6)
 
@@ -1207,113 +1346,16 @@ class POSApp(tk.Tk):
         catalog_container = tk.Frame(right, bg=PALETTE["panel"])
         catalog_container.pack(fill="both", expand=True, padx=10, pady=(6, 0))
 
-        # Panel superior: búsqueda + cantidad + keypad
-        top_catalog = tk.Frame(catalog_container, bg=PALETTE["panel"])
-        top_catalog.pack(fill="x", padx=6, pady=(6, 6))
-
-        # Columna izquierda: búsqueda
-        left_col = tk.Frame(top_catalog, bg=PALETTE["panel"])
-        left_col.pack(side="left", fill="both", expand=True, padx=(0, 8))
-
+        # Título del catálogo
         tk.Label(
-            left_col,
-            text="🔍 Buscar producto:",
+            catalog_container,
+            text="📋 Catálogo de Productos",
             fg=PALETTE["text"],
             bg=PALETTE["panel"],
-            font=FONT_BIG
-        ).pack(anchor="w", pady=(0, 4))
+            font=FONT_HUGE
+        ).pack(anchor="w", padx=10, pady=(10, 8))
 
-        search_frame = tk.Frame(left_col, bg=PALETTE["panel"])
-        search_frame.pack(fill="x", pady=(0, 8))
-
-        self.search_entry = tk.Entry(
-            search_frame,
-            textvariable=self.search_var,
-            font=FONT_BIG,
-            width=30
-        )
-        self.search_entry.pack(side="left", fill="x", expand=True, ipady=6)
-        self.search_entry.bind("<Return>", self.on_search_enter)
-
-        tk.Button(
-            search_frame,
-            text="✖ Limpiar",
-            command=self.clear_search,
-            font=FONT_BASE,
-            fg="white",
-            bg=PALETTE["danger"],
-            activebackground=PALETTE["danger"],
-            activeforeground="white",
-            bd=0,
-            padx=14,
-            pady=8,
-            cursor="hand2"
-        ).pack(side="left", padx=(8, 0))
-
-        # Info de búsqueda
-        self.lbl_search_info = tk.Label(
-            left_col,
-            text="Escribe para filtrar. Enter = agregar si hay 1 resultado.",
-            fg=PALETTE["muted"],
-            bg=PALETTE["panel"],
-            font=("Segoe UI", 11)
-        )
-        self.lbl_search_info.pack(anchor="w")
-
-        # Columna derecha: cantidad + keypad
-        right_col = tk.Frame(top_catalog, bg=PALETTE["btn"])
-        right_col.pack(side="left", fill="y", padx=(8, 0))
-
-        tk.Label(
-            right_col,
-            text="🔢 Cantidad:",
-            fg=PALETTE["text"],
-            bg=PALETTE["btn"],
-            font=FONT_BIG
-        ).pack(pady=(8, 4))
-
-        self.qty_entry = tk.Entry(
-            right_col,
-            textvariable=self.qty_str_var,
-            font=("Segoe UI", 18, "bold"),
-            width=5,
-            justify="center",
-            state="readonly",
-            readonlybackground="white"
-        )
-        self.qty_entry.pack(pady=(0, 6), padx=6)
-
-        # Teclado numérico
-        keypad = tk.Frame(right_col, bg=PALETTE["btn"])
-        keypad.pack(padx=8, pady=(0, 8))
-
-        # Botones del keypad: 3 columnas
-        keypad_buttons = [
-            ['7', '8', '9'],
-            ['4', '5', '6'],
-            ['1', '2', '3'],
-            ['C', '0', '←']
-        ]
-
-        for row_idx, row in enumerate(keypad_buttons):
-            for col_idx, char in enumerate(row):
-                btn = tk.Button(
-                    keypad,
-                    text=char,
-                    command=lambda c=char: self.keypad_press(c),
-                    font=FONT_BASE,
-                    fg="white",
-                    bg=PALETTE["btn2"] if char in ['C', '←'] else PALETTE["primary"],
-                    activebackground=PALETTE["btn2"] if char in ['C', '←'] else PALETTE["primary"],
-                    activeforeground="white",
-                    bd=0,
-                    width=3,
-                    height=1,
-                    cursor="hand2"
-                )
-                btn.grid(row=row_idx, column=col_idx, padx=2, pady=2)
-
-        # Catálogo de productos
+        # Catálogo de productos (más espacio)
         self.catalog_widget = ProductCatalog(catalog_container, on_product_click_callback=self.on_product_tile_click, bg=PALETTE["panel"])
         self.catalog_widget.pack(fill="both", expand=True, padx=6, pady=(0, 6))
 
@@ -1596,17 +1638,14 @@ class POSApp(tk.Tk):
         if self.service.cuentas.get(self.selected_slot) is None:
             messagebox.showwarning(
                 "Mesa libre",
-                f"La Mesa {self.selected_slot} está libre. Ábrela primero con el botón 'Abrir Mesa'.",
+                f"La Mesa {self.selected_slot} está libre. Ábrela primero tocándola dos veces.",
                 parent=self
             )
             return
         
-        # Obtener cantidad del keypad
-        try:
-            qty = int(self.qty_str_var.get())
-            if qty < 1:
-                qty = 1
-        except ValueError:
+        # Obtener cantidad (siempre 1 sin numpad)
+        qty = self.qty_var.get()
+        if qty < 1:
             qty = 1
         
         # Agregar cantidad especificada del producto
@@ -1922,25 +1961,48 @@ class POSApp(tk.Tk):
         self.lbl_tot.config(text=f"Total: {money_from_cents(det['total_centavos'])}")
 
     # ---------------- Selección slot ----------------
+    def on_mesa_click(self, slot: int):
+        """Maneja el clic en una mesa. Doble clic abre la mesa si está libre."""
+        import time
+        current_time = time.time()
+        
+        # Verificar si es un doble clic (dentro de 500ms)
+        is_double_click = (
+            self.last_clicked_slot == slot and 
+            (current_time - self.last_click_time) < 0.5
+        )
+        
+        self.last_click_time = current_time
+        self.last_clicked_slot = slot
+        
+        if is_double_click:
+            # Doble clic: si la mesa está libre, abrirla automáticamente
+            if self.service.cuentas.get(slot) is None:
+                self.gui_open_account_touch_slot(slot)
+            else:
+                # Si ya está abierta, solo seleccionar
+                self.select_slot(slot)
+        else:
+            # Clic simple: solo seleccionar
+            self.select_slot(slot)
+    
     def select_slot(self, slot: int):
-        # Si está libre, solo selecciona (no abre). Abrir se hace con botón "Abrir Mesa"
-        self.selected_slot = slot if self.service.cuentas.get(slot) is not None else slot
+        """Selecciona una mesa sin abrirla."""
+        self.selected_slot = slot
         # Si está libre, no hay detalle. Si está abierta, muestra detalle.
         if self.service.cuentas.get(slot) is None:
-            self.lbl_selected.config(text=f"Mesa {slot} (LIBRE) - toca 'Abrir Mesa'")
+            self.lbl_selected.config(text=f"Mesa {slot} (LIBRE) - toca dos veces para abrir")
             self.clear_items_view()
         else:
             self.refresh_account_detail()
         self.refresh_accounts_tiles()
 
     # ---------------- Cuentas (touch) ----------------
-    def gui_open_account_touch(self):
-        # Si ya hay mesa seleccionada, usa ese slot. Si no, pregunta.
-        slot = self.selected_slot
+    def gui_open_account_touch_slot(self, slot: int):
+        """Abre una cuenta en un slot específico."""
         if slot is None or slot < 1 or slot > MAX_CUENTAS:
-            slot = simpledialog.askinteger("Abrir cuenta", "Slot (1..10):", minvalue=1, maxvalue=MAX_CUENTAS, parent=self)
-            if slot is None:
-                return
+            messagebox.showerror("Error", "Slot inválido.", parent=self)
+            return
 
         if self.service.cuentas.get(slot) is not None:
             messagebox.showerror("Abrir", "Esa mesa ya está abierta.", parent=self)
@@ -1948,7 +2010,10 @@ class POSApp(tk.Tk):
 
         name = simpledialog.askstring("Abrir cuenta", "Nombre (ej. Mesa 3, Terraza, Carlos):", parent=self)
         if name is None:
-            name = ""
+            return  # Usuario canceló
+        
+        if name == "":
+            name = f"Mesa {slot}"
 
         try:
             self.service.open_account(slot, name)
@@ -2057,8 +2122,12 @@ class POSApp(tk.Tk):
             res = self.service.close_account(self.selected_slot)
             if res.get("recorded"):
                 total_centavos = res["total_centavos"]
+                subtotal_centavos = res["subtotal_centavos"]
+                iva_centavos = res["iva_centavos"]
                 closed_account_id = res.get("closed_account_id")
                 receipt_no = res.get("receipt_no")
+                receipt_txt = res.get("receipt_txt")
+                receipt_pdf = res.get("receipt_pdf")
 
                 # Capturar método de pago
                 payment_dlg = PaymentMethodDialog(self, total_centavos)
@@ -2075,6 +2144,8 @@ class POSApp(tk.Tk):
                 # Registrar pago en BD
                 try:
                     from pos_core import rewrite_receipt_with_payment
+                    from datetime import date
+                    
                     self.service.record_payment(
                         closed_account_id,
                         receipt_no,
@@ -2085,22 +2156,28 @@ class POSApp(tk.Tk):
                         self.current_user
                     )
                     
+                    # Obtener datos del resultado de close_account
+                    bd = date.today().isoformat()
+                    cuenta_label = res.get("cuenta_label", "Mesa")
+                    lines = res.get("lines", [])
+                    ts = res.get("ts")
+                    
                     # Regenerar recibos con info de pago
                     rewrite_receipt_with_payment(
-                        self.service.db,
-                        closed_account_id,
-                        receipt_no,
-                        payment_data["method"],
-                        payment_data.get("cash_received"),
-                        payment_data.get("change")
+                        txt_path=receipt_txt,
+                        pdf_path=receipt_pdf,
+                        receipt_no=receipt_no,
+                        business_date=bd,
+                        ts=ts,
+                        cuenta_label=cuenta_label,
+                        lines=lines,
+                        subtotal_centavos=subtotal_centavos,
+                        iva_centavos=iva_centavos,
+                        total_centavos=total_centavos,
+                        method=payment_data["method"],
+                        cash_received_centavos=payment_data.get("cash_received"),
+                        change_centavos=payment_data.get("change")
                     )
-                    
-                    # Actualizar rutas de recibos para impresión
-                    from datetime import date
-                    bd = date.today().isoformat()
-                    recdir = f"receipts/{bd}"
-                    receipt_txt = f"{recdir}/recibo_{bd}_{receipt_no}.txt"
-                    receipt_pdf = f"{recdir}/recibo_{bd}_{receipt_no}.pdf"
                     
                 except Exception as e:
                     messagebox.showerror("Error", f"Error al registrar pago: {e}", parent=self)

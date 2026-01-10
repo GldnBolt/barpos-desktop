@@ -1238,7 +1238,10 @@ class POSService:
             "total_centavos": total,
             "receipt_no": receipt_no,
             "receipt_pdf": pdf_path,
-            "receipt_txt": txt_path
+            "receipt_txt": txt_path,
+            "cuenta_label": cuenta.nombre,
+            "lines": lines,
+            "ts": ts
         }
 
     # ---- Reportes / cierre ----

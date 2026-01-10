@@ -2,11 +2,11 @@
 
 
 a = Analysis(
-    ['pos_gui.py'],
+    ['pos_gui.py', 'pos_core.py'],
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=['pos_core'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

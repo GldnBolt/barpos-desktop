@@ -1,0 +1,7 @@
+id,nombre,tipo,precio,stock,estado
+4,Agua,bebida,1000.0,21,OK
+2,Cerveza Imperial,bebida,1600.0,48,OK
+1,Cerveza Pilsen,bebida,1600.0,48,OK
+3,Gaseosa,bebida,1200.0,24,OK
+5,Hamburguesa,comida,3500.0,15,OK
+6,Papas fritas,comida,2000.0,20,OK

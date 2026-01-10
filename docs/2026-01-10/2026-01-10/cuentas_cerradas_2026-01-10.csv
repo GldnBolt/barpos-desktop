@@ -1,0 +1,3 @@
+id,ts,cuenta,subtotal,iva,total,items_json
+1,2026-01-10 12:39:05,Mesa 1,3000.0,390.0,3390.0,"[{""product_id"": 4, ""nombre"": ""Agua"", ""tipo"": ""bebida"", ""qty"": 3, ""unit_price_centavos"": 100000, ""line_subtotal_centavos"": 300000}]"
+2,2026-01-10 17:50:24,Adrian,4600.0,598.0,5198.0,"[{""product_id"": 2, ""nombre"": ""Cerveza Imperial"", ""tipo"": ""bebida"", ""qty"": 1, ""unit_price_centavos"": 160000, ""line_subtotal_centavos"": 160000}, {""product_id"": 7, ""nombre"": ""Pollo de 3000"", ""tipo"": ""comida"", ""qty"": 1, ""unit_price_centavos"": 300000, ""line_subtotal_centavos"": 300000}]"

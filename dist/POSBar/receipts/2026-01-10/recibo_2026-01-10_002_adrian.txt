@@ -1,0 +1,19 @@
+Mi Bar
+POS - Recibo
+--------------------------------
+Recibo #: 2
+Fecha: 2026-01-10  Hora: 17:50:24
+Cuenta: Adrian
+--------------------------------
+ 1 x Cerveza Imperial     ₡1,600.00
+ 1 x Pollo de 3000        ₡3,000.00
+--------------------------------
+Subtotal: ₡4,600.00
+IVA 13%: ₡598.00
+TOTAL:   ₡5,198.00
+--------------------------------
+Método de pago: EFECTIVO
+Recibido: ₡6,000.00
+Vuelto:   ₡802.00
+--------------------------------
+Gracias por su compra.
